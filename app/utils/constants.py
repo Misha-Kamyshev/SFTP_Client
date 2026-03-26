@@ -1,0 +1,3 @@
+APP_NAME = "SFTPSyncClient"
+APP_DISPLAY_NAME = "SFTP Sync Client"
+ORGANIZATION_NAME = "LocalTools"
