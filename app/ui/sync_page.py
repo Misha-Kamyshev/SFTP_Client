@@ -32,6 +32,9 @@ class SyncPage(QWidget):
         super().__init__()
         self._log_entries: list[tuple[str, bool]] = []
         self._connection_active = False
+        self._session_available = False
+        self._sync_running = False
+        self._sync_waiting = False
         self._build_ui()
         self._connect_signals()
         app = QApplication.instance()
@@ -59,16 +62,18 @@ class SyncPage(QWidget):
     def set_sync_status(self, text: str) -> None:
         self.sync_status_value.setText(text)
 
-    def set_sync_controls(self, running: bool) -> None:
-        self.start_button.setEnabled(self._connection_active and not running)
-        self.stop_button.setEnabled(self._connection_active and running)
+    def set_sync_controls(self, running: bool, waiting: bool = False) -> None:
+        self._sync_running = running
+        self._sync_waiting = waiting
+        self._refresh_controls()
 
     def set_connection_active(self, active: bool) -> None:
         self._connection_active = active
-        self.remote_dir_button.setEnabled(active)
-        self.disconnect_button.setEnabled(active)
-        self.start_button.setEnabled(active and self.sync_status_value.text() != "Запущено")
-        self.stop_button.setEnabled(active and self.sync_status_value.text() == "Запущено")
+        self._refresh_controls()
+
+    def set_session_available(self, available: bool) -> None:
+        self._session_available = available
+        self._refresh_controls()
 
     def local_path(self) -> str:
         return self.local_dir_edit.text().strip()
@@ -80,6 +85,10 @@ class SyncPage(QWidget):
         previous = self.autostart_checkbox.blockSignals(True)
         self.autostart_checkbox.setChecked(enabled)
         self.autostart_checkbox.blockSignals(previous)
+
+    def set_autostart_supported(self, supported: bool, description: str | None = None) -> None:
+        self.autostart_checkbox.setEnabled(supported)
+        self.autostart_checkbox.setToolTip(description or "")
 
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout(self)
@@ -164,3 +173,9 @@ class SyncPage(QWidget):
         cursor = self.log_output.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.log_output.setTextCursor(cursor)
+
+    def _refresh_controls(self) -> None:
+        self.remote_dir_button.setEnabled(self._connection_active)
+        self.disconnect_button.setEnabled(self._session_available)
+        self.start_button.setEnabled(self._connection_active and not self._sync_running and not self._sync_waiting)
+        self.stop_button.setEnabled((self._connection_active and self._sync_running) or self._sync_waiting)

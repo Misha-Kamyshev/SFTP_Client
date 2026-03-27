@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QSettings
 
-from app.models.config import DEFAULT_SFTP_PORT, AppSettings, AuthMethod
+from app.models.config import DEFAULT_SFTP_PORT, AppSettings, AuthMethod, RuntimeState
 from app.storage.credentials_store import CredentialsStore
 
 
@@ -37,6 +39,53 @@ class SettingsService:
         self._settings.setValue("sync/was_running", data.sync_was_running)
         self._settings.setValue("ui/autostart_enabled", data.autostart_enabled)
         self._settings.sync()
+
+    def save_sync_paths(self, local_path: str, remote_path: str) -> None:
+        self._settings.setValue("sync/local_dir", local_path)
+        self._settings.setValue("sync/remote_dir", remote_path)
+        self._settings.sync()
+
+    def load_sync_paths(self) -> tuple[str, str]:
+        return (
+            str(self._settings.value("sync/local_dir", "")),
+            str(self._settings.value("sync/remote_dir", "")),
+        )
+
+    def save_runtime_state(self, sync_running: bool, window_hidden_to_tray: bool) -> None:
+        self._settings.setValue("runtime/sync_running", sync_running)
+        self._settings.setValue("runtime/window_hidden_to_tray", window_hidden_to_tray)
+        self._settings.setValue("sync/was_running", sync_running)
+        self._settings.sync()
+
+    def load_runtime_state(self) -> RuntimeState:
+        sync_running = self._settings.value(
+            "runtime/sync_running",
+            self._settings.value("sync/was_running", False, bool),
+            bool,
+        )
+        return RuntimeState(
+            sync_running=sync_running,
+            window_hidden_to_tray=self._settings.value("runtime/window_hidden_to_tray", False, bool),
+        )
+
+    def clear_connection_settings(self, host: str = "", username: str = "") -> None:
+        if host and username:
+            self._credentials_store.delete(host, username)
+        else:
+            self._credentials_store.clear_all()
+
+        current = self.load()
+        preserved = replace(
+            current,
+            host="",
+            port=DEFAULT_SFTP_PORT,
+            username="",
+            auth_method=AuthMethod.PASSWORD,
+            key_path="",
+            sync_was_running=False,
+        )
+        self.save(preserved)
+        self.save_runtime_state(sync_running=False, window_hidden_to_tray=False)
 
     def save_credentials(
         self,

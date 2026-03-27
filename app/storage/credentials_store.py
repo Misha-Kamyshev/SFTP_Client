@@ -9,7 +9,7 @@ from PySide6.QtCore import QSettings
 
 from app.models.config import AuthMethod
 from app.utils.constants import APP_NAME
-from app.utils.paths import ensure_private_file
+from app.utils.platform_paths import app_config_dir, ensure_private_file
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class CredentialsStore:
 
     def __init__(self, settings: QSettings) -> None:
         self._settings = settings
-        self._fallback_file = ensure_private_file(Path.home() / ".config" / APP_NAME / "credentials.ini")
+        self._fallback_file = ensure_private_file(app_config_dir(APP_NAME) / "credentials.ini")
 
     def save(self, host: str, username: str, auth_method: AuthMethod, password: str = "", key_path: str = "") -> None:
         service_name = self._service_name(host, username)

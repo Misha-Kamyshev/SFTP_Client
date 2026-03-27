@@ -42,6 +42,7 @@ class SyncWorker(QObject):
     log_message = Signal(str)
     sync_state_changed = Signal(str)
     connection_state_changed = Signal(str)
+    connection_issue = Signal(str, str)
     finished = Signal()
 
     def __init__(
@@ -67,6 +68,8 @@ class SyncWorker(QObject):
 
     @Slot()
     def run(self) -> None:
+        final_sync_state = "stopped"
+        final_connection_state = "disconnected"
         self.sync_state_changed.emit("running")
         try:
             self._service.connect(self._request)
@@ -83,11 +86,18 @@ class SyncWorker(QObject):
                     continue
                 self._process_local_path(Path(path))
         except Exception as exc:  # noqa: BLE001
-            self.connection_state_changed.emit("disconnected")
-            self.log_message.emit(f"Ошибка фоновой синхронизации: {exc}")
+            message = self._service.user_friendly_error(exc)
+            category = self._service.error_category(exc)
+            self.connection_issue.emit(category, message)
+            if self._service.should_retry_connection_error(exc):
+                final_sync_state = "waiting"
+                final_connection_state = "waiting"
+                self.log_message.emit(f"Соединение потеряно: {message}")
+            else:
+                self.log_message.emit(f"Ошибка фоновой синхронизации: {message}")
         finally:
-            self._cleanup()
-            self.sync_state_changed.emit("stopped")
+            self._cleanup(final_connection_state)
+            self.sync_state_changed.emit(final_sync_state)
             self.finished.emit()
 
     def stop(self) -> None:
@@ -98,10 +108,13 @@ class SyncWorker(QObject):
         for path in sorted(self._local_dir.rglob("*")):
             if self._stop_event.is_set():
                 break
-            if path.is_dir():
-                self._sync_directory_if_changed(path)
-            elif path.is_file():
-                self._upload_if_changed(path)
+            try:
+                if path.is_dir():
+                    self._sync_directory_if_changed(path)
+                elif path.is_file():
+                    self._upload_if_changed(path)
+            except Exception as exc:  # noqa: BLE001
+                self.log_message.emit(f"Ошибка синхронизации пути {path}: {exc}")
         self.log_message.emit("Первичная синхронизация завершена.")
 
     def _start_observer(self) -> None:
@@ -118,10 +131,13 @@ class SyncWorker(QObject):
             return
         if not candidate.exists():
             return
-        if candidate.is_dir():
-            self._sync_directory_if_changed(candidate)
-        elif candidate.is_file():
-            self._upload_if_changed(candidate)
+        try:
+            if candidate.is_dir():
+                self._sync_directory_if_changed(candidate)
+            elif candidate.is_file():
+                self._upload_if_changed(candidate)
+        except Exception as exc:  # noqa: BLE001
+            self.log_message.emit(f"Ошибка синхронизации пути {candidate}: {exc}")
 
     def _upload_if_changed(self, local_path: Path) -> None:
         if self._should_ignore_path(local_path):
@@ -153,7 +169,9 @@ class SyncWorker(QObject):
         except FileNotFoundError:
             return
         except Exception as first_exc:  # noqa: BLE001
-            self.log_message.emit(f"Ошибка загрузки {relative_path}: {first_exc}. Повторное подключение.")
+            self.log_message.emit(
+                f"Ошибка загрузки {relative_path}: {self._service.user_friendly_error(first_exc)}. Повторное подключение."
+            )
             self._service.reconnect()
             self.connection_state_changed.emit("connected")
             try:
@@ -179,6 +197,7 @@ class SyncWorker(QObject):
 
         self._service.sync_directory(local_path, remote_path)
         self._directory_index[relative_path] = snapshot
+        self.log_message.emit(f"Синхронизирована директория: {relative_path or '.'}")
 
     def _should_ignore_path(self, path: Path) -> bool:
         name = path.name
@@ -188,10 +207,10 @@ class SyncWorker(QObject):
             return True
         return False
 
-    def _cleanup(self) -> None:
+    def _cleanup(self, connection_state: str) -> None:
         if self._observer is not None:
             self._observer.stop()
             self._observer.join(timeout=5)
             self._observer = None
         self._service.disconnect()
-        self.connection_state_changed.emit("disconnected")
+        self.connection_state_changed.emit(connection_state)

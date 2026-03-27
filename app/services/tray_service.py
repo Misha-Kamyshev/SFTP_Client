@@ -7,6 +7,10 @@ from PySide6.QtWidgets import QMenu, QStyle, QSystemTrayIcon, QWidget
 
 
 class TrayService(QSystemTrayIcon):
+    @staticmethod
+    def is_available() -> bool:
+        return QSystemTrayIcon.isSystemTrayAvailable()
+
     def __init__(
         self,
         parent: QWidget,

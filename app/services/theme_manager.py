@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from enum import StrEnum
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -75,6 +76,9 @@ class ThemeManager(QObject):
         self._current_theme = ThemeMode.LIGHT
 
     def detect_system_theme(self) -> ThemeMode:
+        if sys.platform != "linux":
+            return ThemeMode.LIGHT
+
         gtk_theme = os.environ.get("GTK_THEME", "").strip().lower()
         if "dark" in gtk_theme:
             return ThemeMode.DARK

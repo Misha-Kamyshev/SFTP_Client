@@ -91,6 +91,7 @@ class LoginPage(QWidget):
         self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
 
         self.key_path_edit = QLineEdit()
+        self.key_path_edit.setPlaceholderText("Если пусто, будут проверены ключи из ~/.ssh")
         self.key_browse_button = QPushButton("...")
         self.key_browse_button.setFixedWidth(36)
         key_layout = QHBoxLayout()
@@ -164,8 +165,5 @@ class LoginPage(QWidget):
             return
         if request.auth_method == AuthMethod.PASSWORD and not request.password:
             self.show_error("Введите пароль.")
-            return
-        if request.auth_method == AuthMethod.SSH_KEY and not request.key_path:
-            self.show_error("Выберите путь к SSH-ключу.")
             return
         self.connect_requested.emit(request)

@@ -19,7 +19,8 @@ def main() -> int:
     app.theme_manager = theme_manager  # type: ignore[attr-defined]
 
     window = MainWindow()
-    window.show()
+    if not window.should_start_hidden_to_tray():
+        window.show()
     return app.exec()
 
 

@@ -33,3 +33,9 @@ class AppSettings:
     remote_dir: str = ""
     sync_was_running: bool = False
     autostart_enabled: bool = True
+
+
+@dataclass(slots=True)
+class RuntimeState:
+    sync_running: bool = False
+    window_hidden_to_tray: bool = False
