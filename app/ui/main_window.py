@@ -55,7 +55,6 @@ class MainWindow(QMainWindow):
             return
         self._set_window_hidden_to_tray(True)
         self.hide()
-        self._tray.showMessage("SFTP Sync Client", "Приложение свернуто в системный трей.")
         event.ignore()
 
     def changeEvent(self, event) -> None:  # type: ignore[override]
@@ -401,6 +400,10 @@ class MainWindow(QMainWindow):
             return
 
         if state == "disconnected":
+            if self._last_connection_request is not None and not self._reconnect_service.is_active():
+                self._sync_page.set_connection_status("Подключено")
+                self._sync_page.set_connection_active(True)
+                return
             if self._last_connection_request is not None:
                 self._sync_page.set_connection_status("Соединение потеряно")
                 self._sync_page.set_connection_active(False)

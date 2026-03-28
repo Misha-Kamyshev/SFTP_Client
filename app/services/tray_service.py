@@ -56,3 +56,6 @@ class TrayService(QSystemTrayIcon):
             QSystemTrayIcon.ActivationReason.Trigger,
         }:
             self._on_show()
+
+    def show_app_message(self, title: str, message: str, timeout_ms: int = 10000) -> None:
+        self.showMessage(title, message, app_icon(), timeout_ms)
