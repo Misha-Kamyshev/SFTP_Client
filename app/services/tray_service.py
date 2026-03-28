@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtGui import QAction, QIcon
-from PySide6.QtWidgets import QMenu, QStyle, QSystemTrayIcon, QWidget
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
+
+from app.utils.resources import app_icon
 
 
 class TrayService(QSystemTrayIcon):
@@ -19,8 +21,7 @@ class TrayService(QSystemTrayIcon):
         on_stop_sync: Callable[[], None],
         on_exit: Callable[[], None],
     ) -> None:
-        icon = parent.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
-        super().__init__(QIcon(icon), parent)
+        super().__init__(app_icon(), parent)
         self._on_show = on_show
         self._on_start_sync = on_start_sync
         self._on_stop_sync = on_stop_sync

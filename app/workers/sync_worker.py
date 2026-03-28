@@ -20,22 +20,32 @@ class FileSnapshot:
     mtime_ns: int
 
 
+@dataclass(slots=True)
+class SyncEvent:
+    kind: str
+    path: str
+
+
 class LocalEventHandler(FileSystemEventHandler):
-    def __init__(self, event_queue: queue.Queue[str]) -> None:
+    def __init__(self, event_queue: queue.Queue[SyncEvent]) -> None:
         super().__init__()
         self._queue = event_queue
 
     def on_created(self, event: FileSystemEvent) -> None:
-        self._enqueue(event)
+        self._enqueue("upsert", event.src_path)
 
     def on_modified(self, event: FileSystemEvent) -> None:
-        self._enqueue(event)
+        self._enqueue("upsert", event.src_path)
+
+    def on_deleted(self, event: FileSystemEvent) -> None:
+        self._enqueue("delete", event.src_path)
 
     def on_moved(self, event: FileSystemEvent) -> None:
-        self._queue.put(event.dest_path)
+        self._enqueue("delete", event.src_path)
+        self._enqueue("upsert", event.dest_path)
 
-    def _enqueue(self, event: FileSystemEvent) -> None:
-        self._queue.put(event.src_path)
+    def _enqueue(self, kind: str, path: str) -> None:
+        self._queue.put(SyncEvent(kind=kind, path=path))
 
 
 class SyncWorker(QObject):
@@ -58,7 +68,7 @@ class SyncWorker(QObject):
         self._remote_dir = remote_dir
         self._poll_interval_seconds = poll_interval_seconds
         self._stop_event = threading.Event()
-        self._event_queue: queue.Queue[str] = queue.Queue()
+        self._event_queue: queue.Queue[SyncEvent] = queue.Queue()
         self._observer: Observer | None = None
         self._service = SFTPService()
         self._uploaded_index: dict[str, FileSnapshot] = {}
@@ -81,10 +91,10 @@ class SyncWorker(QObject):
             self.log_message.emit("Отслеживание локальной директории запущено.")
             while not self._stop_event.is_set():
                 try:
-                    path = self._event_queue.get(timeout=self._poll_interval_seconds)
+                    event = self._event_queue.get(timeout=self._poll_interval_seconds)
                 except queue.Empty:
                     continue
-                self._process_local_path(Path(path))
+                self._process_local_event(event)
         except Exception as exc:  # noqa: BLE001
             message = self._service.user_friendly_error(exc)
             category = self._service.error_category(exc)
@@ -105,6 +115,7 @@ class SyncWorker(QObject):
 
     def _initial_scan(self) -> None:
         self.log_message.emit("Запуск первичной синхронизации.")
+        self._download_missing_remote_entries()
         for path in sorted(self._local_dir.rglob("*")):
             if self._stop_event.is_set():
                 break
@@ -117,17 +128,44 @@ class SyncWorker(QObject):
                 self.log_message.emit(f"Ошибка синхронизации пути {path}: {exc}")
         self.log_message.emit("Первичная синхронизация завершена.")
 
+    def _download_missing_remote_entries(self) -> None:
+        self.log_message.emit("Проверка отсутствующих локальных файлов на сервере.")
+        remote_directories, remote_files = self._service.walk_remote_tree(self._remote_dir)
+
+        for relative_dir in remote_directories:
+            if self._stop_event.is_set():
+                return
+            local_dir = self._local_dir / Path(relative_dir)
+            if local_dir.exists():
+                continue
+            local_dir.mkdir(parents=True, exist_ok=True)
+            self.log_message.emit(f"Создана локальная папка из сервера: {relative_dir}")
+
+        remote_base = self._remote_dir if self._remote_dir == "/" else self._remote_dir.rstrip("/")
+        for relative_file in remote_files:
+            if self._stop_event.is_set():
+                return
+            local_file = self._local_dir / Path(relative_file)
+            if local_file.exists():
+                continue
+            remote_path = posixpath.join(remote_base, relative_file)
+            self._service.download_file(remote_path, local_file)
+            self.log_message.emit(f"Скачан отсутствующий локально файл: {relative_file}")
+
     def _start_observer(self) -> None:
         handler = LocalEventHandler(self._event_queue)
         self._observer = Observer()
         self._observer.schedule(handler, str(self._local_dir), recursive=True)
         self._observer.start()
 
-    def _process_local_path(self, path: Path) -> None:
+    def _process_local_event(self, event: SyncEvent) -> None:
         if self._stop_event.is_set():
             return
-        candidate = path.expanduser().resolve()
+        candidate = Path(event.path).expanduser().resolve()
         if self._should_ignore_path(candidate):
+            return
+        if event.kind == "delete":
+            self._delete_remote_path(candidate)
             return
         if not candidate.exists():
             return
@@ -138,6 +176,35 @@ class SyncWorker(QObject):
                 self._upload_if_changed(candidate)
         except Exception as exc:  # noqa: BLE001
             self.log_message.emit(f"Ошибка синхронизации пути {candidate}: {exc}")
+
+    def _delete_remote_path(self, local_path: Path) -> None:
+        try:
+            relative_path = local_path.relative_to(self._local_dir).as_posix()
+        except ValueError:
+            return
+
+        self._uploaded_index.pop(relative_path, None)
+        self._directory_index.pop(relative_path, None)
+        for key in list(self._uploaded_index):
+            if key.startswith(f"{relative_path}/"):
+                self._uploaded_index.pop(key, None)
+        for key in list(self._directory_index):
+            if key.startswith(f"{relative_path}/"):
+                self._directory_index.pop(key, None)
+
+        remote_base = self._remote_dir if self._remote_dir == "/" else self._remote_dir.rstrip("/")
+        remote_path = posixpath.join(remote_base, relative_path) if relative_path else remote_base
+        try:
+            self._service.delete_remote_path(remote_path)
+            self.log_message.emit(f"Удалён путь на сервере: {relative_path or '.'}")
+        except Exception as exc:  # noqa: BLE001
+            self.log_message.emit(
+                f"Ошибка удаления {relative_path or '.'}: {self._service.user_friendly_error(exc)}. Повторное подключение."
+            )
+            self._service.reconnect()
+            self.connection_state_changed.emit("connected")
+            self._service.delete_remote_path(remote_path)
+            self.log_message.emit(f"Путь удалён на сервере после переподключения: {relative_path or '.'}")
 
     def _upload_if_changed(self, local_path: Path) -> None:
         if self._should_ignore_path(local_path):

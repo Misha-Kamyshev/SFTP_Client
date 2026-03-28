@@ -21,38 +21,45 @@ GUI-приложение на `Python 3.11+` и `PySide6`, которое под
 
 ```text
 SFTP_Client/
+├── build.sh
 ├── main.py
 ├── requirements.txt
 ├── README.md
-└── app/
+├── SFTPSyncClient.spec
+└── scripts/
+    └── build_exe.ps1
+```
+
+```text
+app/
+├── __init__.py
+├── models/
+│   ├── __init__.py
+│   └── config.py
+├── services/
+│   ├── __init__.py
+│   ├── autostart_service.py
+│   ├── settings_service.py
+│   ├── sftp_service.py
+│   ├── theme_manager.py
+│   └── tray_service.py
+├── storage/
+│   ├── __init__.py
+│   └── credentials_store.py
+├── ui/
+│   ├── __init__.py
+│   ├── login_page.py
+│   ├── main_window.py
+│   ├── remote_directory_dialog.py
+│   └── sync_page.py
+├── utils/
+│   ├── __init__.py
+│   ├── constants.py
+│   ├── file_dialogs.py
+│   └── paths.py
+└── workers/
     ├── __init__.py
-    ├── models/
-    │   ├── __init__.py
-    │   └── config.py
-    ├── services/
-    │   ├── __init__.py
-    │   ├── autostart_service.py
-    │   ├── settings_service.py
-    │   ├── sftp_service.py
-    │   ├── theme_manager.py
-    │   └── tray_service.py
-    ├── storage/
-    │   ├── __init__.py
-    │   └── credentials_store.py
-    ├── ui/
-    │   ├── __init__.py
-    │   ├── login_page.py
-    │   ├── main_window.py
-    │   ├── remote_directory_dialog.py
-    │   └── sync_page.py
-    ├── utils/
-    │   ├── __init__.py
-    │   ├── constants.py
-    │   ├── file_dialogs.py
-    │   └── paths.py
-    └── workers/
-        ├── __init__.py
-        └── sync_worker.py
+    └── sync_worker.py
 ```
 
 ## Установка
@@ -158,13 +165,45 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1
 
 ### Linux `.deb`
 
-Сборка выполняется на Linux с установленным `dpkg-deb`:
+Linux-пакет собирается как standalone bundle через `PyInstaller`, а затем этот bundle упаковывается в полноценный `.deb`.
+Перед сборкой нужен Python c build-зависимостями:
 
 ```bash
-./scripts/build_deb.sh
+python3 -m pip install '.[build]'
+python3 -m pip install -r requirements.txt
 ```
 
-Скрипт собирает пакет в `dist/*.deb`, копирует приложение в `/opt/sftp-sync-client`, создаёт launcher `/usr/bin/sftp-sync-client` и desktop entry.
+Сборка `.deb`:
+
+```bash
+chmod +x ./build.sh
+./build.sh
+```
+
+Что делает сборка `.deb`:
+
+- собирает Linux standalone bundle через `PyInstaller` из `main.py` с флагом `--windowed`;
+- создаёт директорию `pkg/` со структурой Debian-пакета;
+- кладёт готовый исполняемый файл и bundled runtime в `/opt/sftp-sync-client/`;
+- создаёт симлинк `/usr/bin/sftp-sync-client -> /opt/sftp-sync-client/sftp-sync-client`;
+- вычисляет системные runtime-зависимости бинарника через `dpkg-shlibdeps`, чтобы `apt install ./package.deb` подтягивал нужные системные библиотеки автоматически;
+- создаёт desktop entry, который запускает `/opt/sftp-sync-client/sftp-sync-client`, а не `main.py` через системный `python`;
+- собирает пакет командой `dpkg-deb --build`;
+- прогоняет проверки через `file`, `dpkg-deb --contents` и smoke-test бинарника.
+
+Что включено в пакет:
+
+- PyInstaller bootloader;
+- встроенный Python runtime;
+- Python-зависимости приложения, включая `PySide6`, `paramiko`, `watchdog`, `keyring`;
+- код приложения и сопутствующие runtime-ресурсы.
+
+Почему после установки не нужен `pip install`:
+
+- `.deb` больше не рассчитывает на системный Python и не запускает исходники напрямую;
+- пользователь запускает bundled executable, внутри которого уже упакованы Python runtime и Python-зависимости;
+- на целевой Linux-машине Python не требуется: для Python-runtime пакет самодостаточен, а системные shared libraries ставятся обычным механизмом зависимостей `apt`;
+- за счёт этого после установки и после перезагрузки приложение должно открываться из меню приложений без `ModuleNotFoundError` на `PySide6` и другие pip-зависимости.
 
 ## Ограничения текущего MVP
 

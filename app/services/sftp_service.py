@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import logging
+import os
 import posixpath
 import socket
 import stat
@@ -225,6 +226,31 @@ class SFTPService:
         local_stat = local_path.stat()
         sftp.utime(remote_path, (int(local_stat.st_atime), int(local_stat.st_mtime)))
 
+    def download_file(self, remote_path: str, local_path: Path) -> None:
+        sftp = self._require_sftp()
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        sftp.get(remote_path, str(local_path))
+        remote_stat = sftp.stat(remote_path)
+        local_path.touch(exist_ok=True)
+        local_path.chmod(0o644)
+        os.utime(local_path, (int(remote_stat.st_atime), int(remote_stat.st_mtime)))
+
+    def delete_remote_path(self, remote_path: str) -> None:
+        sftp = self._require_sftp()
+        try:
+            remote_stat = sftp.stat(remote_path)
+        except FileNotFoundError:
+            return
+
+        if stat.S_ISDIR(remote_stat.st_mode):
+            for item in sftp.listdir_attr(remote_path):
+                child_path = posixpath.join(remote_path, item.filename)
+                self.delete_remote_path(child_path)
+            sftp.rmdir(remote_path)
+            return
+
+        sftp.remove(remote_path)
+
     def verify_remote_dir(self, remote_path: str) -> None:
         if not self.is_dir(remote_path):
             raise NotADirectoryError(remote_path)
@@ -293,6 +319,28 @@ class SFTPService:
                 raise OSError("Не удалось создать директорию на сервере.") from exc
             raise
         return remote_path
+
+    def walk_remote_tree(self, remote_path: str) -> tuple[list[str], list[str]]:
+        sftp = self._require_sftp()
+        normalized_root = self.normalize(remote_path)
+        directories: list[str] = []
+        files: list[str] = []
+        stack: list[tuple[str, str]] = [(normalized_root, "")]
+
+        while stack:
+            current_remote_path, relative_root = stack.pop()
+            for item in sorted(sftp.listdir_attr(current_remote_path), key=lambda entry: entry.filename.lower(), reverse=True):
+                child_remote_path = posixpath.join(current_remote_path, item.filename)
+                child_relative_path = posixpath.join(relative_root, item.filename) if relative_root else item.filename
+                if stat.S_ISDIR(item.st_mode):
+                    directories.append(child_relative_path)
+                    stack.append((child_remote_path, child_relative_path))
+                elif stat.S_ISREG(item.st_mode):
+                    files.append(child_relative_path)
+
+        directories.sort()
+        files.sort()
+        return directories, files
 
     def _require_sftp(self) -> paramiko.SFTPClient:
         if not self.is_connected or self._sftp is None:

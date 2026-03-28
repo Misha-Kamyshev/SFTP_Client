@@ -16,6 +16,7 @@ from app.services.tray_service import TrayService
 from app.ui.login_page import LoginPage
 from app.ui.remote_directory_dialog import RemoteDirectoryDialog
 from app.ui.sync_page import SyncPage
+from app.utils.resources import app_icon
 from app.workers.sync_worker import SyncWorker
 
 
@@ -23,6 +24,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("SFTP Sync Client")
+        self.setWindowIcon(app_icon())
         self.resize(800, 600)
         self.setMinimumSize(800, 600)
 
